@@ -1,0 +1,8 @@
+checkpoints/
+checkpoints_ddp/
+wandb/
+__pycache__/
+*.tmp
+*.log
+*.deb
+*.out

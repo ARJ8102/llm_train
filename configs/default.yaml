@@ -1,0 +1,5 @@
+model_name: gpt2
+block_size: 128
+batch_size: 4
+learning_rate: 3e-5
+epochs: 2

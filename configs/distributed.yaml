@@ -1,0 +1,4 @@
+backend: nccl
+gpus: 4
+fp16: true
+zero_stage: 2
