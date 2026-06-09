@@ -31,7 +31,7 @@ SUBSET = "wikitext-2-raw-v1"
 BLOCK_SIZE = 128
 BATCH_SIZE = 2
 EPOCHS = 2
-LR = 3e-5
+LR = 5e-6
 MAX_STEPS_PER_EPOCH = 200
 
 
@@ -93,6 +93,7 @@ def collate_fn(batch, pad_id):
     masks = pad_sequence(masks, batch_first=True, padding_value=0)
 
     labels = input_ids.clone()
+    labels[labels == pad_id] = -100
     return input_ids, masks, labels
 
 
@@ -128,7 +129,7 @@ def main():
         fsdp_model = FSDP(model)
 
     optimizer = torch.optim.AdamW(fsdp_model.parameters(), lr=LR)
-    scaler = GradScaler(enabled=torch.cuda.is_available())
+    scaler = GradScaler(enabled=False)
 
     for epoch in range(EPOCHS):
         fsdp_model.train()
@@ -143,7 +144,7 @@ def main():
 
             input_ids, attention_mask, labels = [x.to(device) for x in batch]
 
-            with autocast(enabled=torch.cuda.is_available()):
+            with autocast(enabled=False):
                 outputs = fsdp_model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -169,21 +170,27 @@ def main():
         if rank == 0:
             print(f"FSDP Epoch {epoch + 1} done | Avg Loss={avg_loss:.4f}")
 
-            full_state_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        dist.barrier()
 
-            with FSDP.state_dict_type(
-                fsdp_model,
-                StateDictType.FULL_STATE_DICT,
-                full_state_config,
-            ):
-                unwrapped_state = fsdp_model.state_dict()
+        full_state_config = FullStateDictConfig(
+            offload_to_cpu=True,
+            rank0_only=True
+        )
 
+        with FSDP.state_dict_type(
+            fsdp_model,
+            StateDictType.FULL_STATE_DICT,
+            full_state_config,
+        ):
+            state_dict = fsdp_model.state_dict()
+
+        if rank == 0:
             base_model = AutoModelForCausalLM.from_pretrained(MODEL_NAME)
-            base_model.load_state_dict(unwrapped_state)
+            base_model.load_state_dict(state_dict, strict=True)
             save_checkpoint(base_model, tokenizer, "checkpoints/fsdp", epoch + 1)
+            print(f"FSDP checkpoint saved for epoch {epoch + 1}")
 
-    if rank == 0:
-        print("FSDP training complete.")
+        dist.barrier()
 
     cleanup()
 

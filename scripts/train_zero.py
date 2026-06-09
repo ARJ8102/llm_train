@@ -1,8 +1,8 @@
 """
 ZeRO Training Script using DeepSpeed.
 
-Best tested on Linux/HPC:
-    deepspeed scripts/train_zero.py
+Run on 2 GPUs:
+    deepspeed --num_gpus=2 scripts/train_zero.py
 """
 
 import os
@@ -24,26 +24,21 @@ MODEL_NAME = "gpt2"
 DATASET_NAME = "wikitext"
 SUBSET = "wikitext-2-raw-v1"
 BLOCK_SIZE = 128
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 EPOCHS = 2
 LR = 3e-5
 MAX_STEPS_PER_EPOCH = 200
 
 
 DS_CONFIG = {
-    "train_batch_size": BATCH_SIZE,
+    "train_micro_batch_size_per_gpu": 1,
     "gradient_accumulation_steps": 1,
+    "train_batch_size": 2,
     "fp16": {
-        "enabled": True
+        "enabled": False
     },
     "zero_optimization": {
         "stage": 2
-    },
-    "optimizer": {
-        "type": "AdamW",
-        "params": {
-            "lr": LR
-        }
     }
 }
 
@@ -67,8 +62,12 @@ def chunk_dataset(tokenized):
         masks = masks[:total]
 
         return {
-            "input_ids": [ids[i:i + BLOCK_SIZE] for i in range(0, total, BLOCK_SIZE)],
-            "attention_mask": [masks[i:i + BLOCK_SIZE] for i in range(0, total, BLOCK_SIZE)],
+            "input_ids": [
+                ids[i:i + BLOCK_SIZE] for i in range(0, total, BLOCK_SIZE)
+            ],
+            "attention_mask": [
+                masks[i:i + BLOCK_SIZE] for i in range(0, total, BLOCK_SIZE)
+            ],
         }
 
     return tokenized.map(chunk, batched=True)
@@ -82,6 +81,8 @@ def collate_fn(batch, pad_id):
     masks = pad_sequence(masks, batch_first=True, padding_value=0)
 
     labels = input_ids.clone()
+    labels[labels == pad_id] = -100
+
     return input_ids, masks, labels
 
 
@@ -105,10 +106,11 @@ def main():
     )
 
     model = AutoModelForCausalLM.from_pretrained(MODEL_NAME)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
     model_engine, optimizer, _, _ = deepspeed.initialize(
         model=model,
-        model_parameters=model.parameters(),
+        optimizer=optimizer,
         config=DS_CONFIG,
     )
 
@@ -138,13 +140,21 @@ def main():
             num_steps += 1
 
             if step % 50 == 0 and model_engine.global_rank == 0:
-                print(f"[ZeRO Epoch {epoch + 1}] Step {step} Loss={loss.item():.4f}")
+                print(
+                    f"[ZeRO Epoch {epoch + 1}] Step {step} "
+                    f"Loss={loss.item():.4f}"
+                )
 
         if model_engine.global_rank == 0:
             avg_loss = total_loss / max(1, num_steps)
             print(f"ZeRO Epoch {epoch + 1} done | Avg Loss={avg_loss:.4f}")
 
-            save_checkpoint(model_engine.module, tokenizer, "checkpoints/zero", epoch + 1)
+            save_checkpoint(
+                model_engine.module,
+                tokenizer,
+                "checkpoints/zero",
+                epoch + 1,
+            )
 
     if model_engine.global_rank == 0:
         print("ZeRO training complete.")
