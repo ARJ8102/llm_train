@@ -1,10 +1,16 @@
 venv/
 dashboard/venv/
+
 __pycache__/
 *.pyc
-.env
+
 wandb/
 logs/
+
 checkpoints/
 checkpoints_ddp/
+
+.env
 .cache/
+
+.ipynb_checkpoints/
