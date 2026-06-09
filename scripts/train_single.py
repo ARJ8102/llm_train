@@ -120,6 +120,6 @@ for epoch in range(EPOCHS):
     wandb.log({"epoch_loss": avg})
 
     # 💾 save model checkpoint each epoch
-    save_checkpoint(model, tokenizer, "checkpoints", epoch+1)
+    save_checkpoint(model, tokenizer, "checkpoints/single", epoch+1)
 
 
